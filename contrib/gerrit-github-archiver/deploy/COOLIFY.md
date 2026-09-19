@@ -137,6 +137,53 @@ If `auth_type` still reads `DEVELOPMENT_BECOME_ANY_ACCOUNT`, the old instance
 is still serving that hostname — check what the DNS record and the proxy point
 at before assuming the deploy failed.
 
+## Recovering a stock-image deployment
+
+If you already deployed `gerritcodereview/gerrit` directly rather than building
+the Dockerfile above, the oauth plugin is absent and `auth.type` is whatever
+the site was initialised with. Fix the running container first, then make it
+durable.
+
+Gerrit's config files are git-config format and `git` is present in the image,
+so edit them with `git config` rather than a heredoc. Appending a second
+`[auth]` section would leave the original `type =` in place and Gerrit reads
+the first one — a mistake that looks like the change silently doing nothing.
+
+```bash
+# What is actually persistent? Anything not listed here is lost on redeploy.
+mount | grep /var/gerrit
+
+ls -la /var/gerrit/plugins/
+git config -f /var/gerrit/etc/gerrit.config --get auth.type
+
+curl -fL -o /var/gerrit/plugins/oauth.jar \
+  'https://gerrit-ci.gerritforge.com/job/plugin-oauth-bazel-stable-3.14/lastSuccessfulBuild/artifact/bazel-bin/plugins/oauth/oauth.jar'
+
+P=plugin.gerrit-oauth-provider-github-oauth
+git config -f /var/gerrit/etc/gerrit.config auth.type OAUTH
+git config -f /var/gerrit/etc/gerrit.config $P.root-url 'https://github.com/'
+git config -f /var/gerrit/etc/gerrit.config $P.client-id 'YOUR_CLIENT_ID'
+git config -f /var/gerrit/etc/gerrit.config gerrit.canonicalWebUrl 'https://gerrit.goudout.com/'
+git config -f /var/gerrit/etc/gerrit.config httpd.listenUrl 'proxy-http://*:8080/'
+git config -f /var/gerrit/etc/secure.config $P.client-secret 'YOUR_CLIENT_SECRET'
+
+chmod 600 /var/gerrit/etc/secure.config
+chown gerrit:gerrit /var/gerrit/etc/secure.config /var/gerrit/plugins/oauth.jar
+```
+
+Restart from Coolify, verify per §5, and log in immediately.
+
+Then check who else is already an administrator. While the instance was open
+anyone could have created an account and joined that group; switching auth
+does not remove accounts or their group memberships, it only stops them
+logging in through the old route. **BROWSE → Groups → Administrators** —
+remove anything you do not recognise.
+
+Finally make it durable. Unless `mount` showed `/var/gerrit/plugins` and
+`/var/gerrit/etc` as volumes, both edits live only in the container layer and
+vanish on the next deploy. Switch to the Dockerfile and compose file in this
+directory, which bake the jar into the image and mount `etc`.
+
 ## Things specific to this setup
 
 **`proxy-http://`, not `http://`.** Coolify's Traefik terminates TLS, so
