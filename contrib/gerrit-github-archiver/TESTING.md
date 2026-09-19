@@ -1,109 +1,41 @@
 # Setting up Gerrit and exercising the archiver end to end
 
-Written against `https://gerrit.goudout.com`, which reports Gerrit **3.3.0**,
-NoteDb enabled, and two repositories (`All-Projects`, `All-Users`).
+Assumes a Gerrit set up per [GERRIT-SETUP.md](GERRIT-SETUP.md) — 3.14 with
+GitHub OAuth. Where 3.3 differs it is noted inline, since that is what
+`gerrit.goudout.com` ran before the rebuild.
 
 ---
 
-## 0. Two things to fix before the trial starts
+## 0. Prerequisite
 
-### 0.1 The instance has no authentication
-
-`GET /config/server/info` reports:
-
-```json
-"auth": { "auth_type": "DEVELOPMENT_BECOME_ANY_ACCOUNT" }
-```
-
-Gerrit's own documentation for that setting reads, in capitals:
-
-> **DO NOT USE.** Only for use in a development environment. [...] a hyperlink
-> titled `Become` appears [...] where they can enter the username of any
-> existing user account, and immediately login as that account, **without any
-> authentication taking place**.
-
-The host answers on the public internet. Anyone who finds it can become any
-account, including the administrator — create repositories, change access
-rules, read everything. Nothing in this archiver design helps with that, and
-every review the trial produces would be attributed to accounts anyone could
-have assumed.
-
-Fix this before anything else. Three options that work on 3.3:
-
-**Reverse proxy does the authentication** — least moving parts:
-
-```ini
-[auth]
-    type = HTTP
-    httpHeader = X-Forwarded-User
-[httpd]
-    listenUrl = proxy-https://127.0.0.1:8080/
-```
-
-Then have nginx (or oauth2-proxy) authenticate and set `X-Forwarded-User`.
-Gerrit must not be reachable except through the proxy, because anyone who can
-reach it directly can set that header themselves.
-
-**GitHub OAuth** — the natural fit here, since the team is already on GitHub,
-and it makes Gerrit accounts line up with GitHub identities:
-
-```ini
-[auth]
-    type = OAUTH
-[plugin "gerrit-oauth-provider-github-oauth"]
-    root-url = https://github.com
-    client-id = <from your GitHub OAuth app>
-    client-secret = <from your GitHub OAuth app>
-```
-
-Install the `gerrit-oauth-provider` plugin build matching 3.3.
-
-**LDAP**, if you have a directory already.
-
-Switching auth type rewrites how accounts are identified, so do it while the
-instance is empty. Afterwards, restart Gerrit and confirm:
-
-```bash
-curl -s https://gerrit.goudout.com/config/server/info | tail -n +2 | \
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["auth"]["auth_type"])'
-```
-
-### 0.2 Gerrit 3.3.0 is from 2021 and is long out of support
-
-Two consequences for a trial:
-
-* The team would be evaluating a five-year-old Gerrit. Submit requirements,
-  the attention set, the comment UI and the review flow have all moved on,
-  so a negative verdict might be about 3.3 rather than about Gerrit.
-* The `replication` and `webhooks` plugin configuration in this directory was
-  written from current documentation. Check the 3.3 builds of both before
-  relying on it — in particular whether `$site_path/etc/replication/` as a
-  per-remote directory exists in that version, because the layout differs.
-
-NoteDb is already enabled, so the upgrade path is the ordinary sequential one.
-Upgrading before the trial is much cheaper than after.
+This assumes a properly authenticated Gerrit. If you are still on the 3.3.0
+instance with `auth_type: DEVELOPMENT_BECOME_ANY_ACCOUNT`, stop and work
+through [GERRIT-SETUP.md](GERRIT-SETUP.md) first — on that instance anyone on
+the internet can become any account, so nothing produced here would mean
+anything.
 
 ---
 
 ## 1. Administrator account and archiver credentials
 
-The first account to log in becomes an administrator. After switching auth
-type, log in, then:
+The first account to log in becomes an administrator (see GERRIT-SETUP.md
+§5). Then:
 
-1. **Settings → HTTP Credentials → Generate Password.** This is the password
-   the archiver and `git` use over HTTPS. (3.3 calls it an HTTP password;
-   later versions replaced it with auth tokens.)
+1. **Settings → Auth Tokens** and create one. This is what the archiver and
+   `git` use over HTTPS. On 3.11 and earlier this was instead
+   **Settings → HTTP Credentials → Generate Password**.
 2. Note your username from **Settings → Profile**.
 
 Sanity check — this must return your account, not 401:
 
 ```bash
-curl -u "$GERRIT_USER:$GERRIT_HTTP_PASSWORD" \
+curl -u "$GERRIT_USER:$GERRIT_TOKEN" \
      https://gerrit.goudout.com/a/accounts/self | tail -n +2
 ```
 
-Once real auth is on, drop `"anonymous": true` from the archiver config and
-set `username` plus `GERRIT_TOKEN` instead.
+Drop `"anonymous": true` from the archiver config and set `username` plus
+`GERRIT_TOKEN` instead. Give the archiver its own account rather than reusing
+yours; it only ever issues GETs.
 
 ---
 
@@ -113,18 +45,19 @@ Via the UI: **BROWSE → Repositories → CREATE NEW**, tick *Create initial emp
 commit*. Or over REST:
 
 ```bash
-curl -u "$GERRIT_USER:$GERRIT_HTTP_PASSWORD" \
+curl -u "$GERRIT_USER:$GERRIT_TOKEN" \
      -X PUT -H 'Content-Type: application/json' \
      -d '{"description":"Archiver end-to-end test","create_empty_commit":true}' \
      https://gerrit.goudout.com/a/projects/archiver-test
 ```
 
 The initial empty commit matters: without it there is no branch for changes to
-target. On 3.3 the default branch is `master` unless `gerrit.defaultBranch`
-says otherwise. Confirm, because every command below depends on it:
+target. Confirm the branch name before going further, because every command below
+depends on it — the default differs between Gerrit versions and is settable
+with `gerrit.defaultBranch`:
 
 ```bash
-curl -s -u "$GERRIT_USER:$GERRIT_HTTP_PASSWORD" \
+curl -s -u "$GERRIT_USER:$GERRIT_TOKEN" \
      https://gerrit.goudout.com/a/projects/archiver-test/branches/ | tail -n +2
 ```
 
@@ -214,7 +147,7 @@ the projection.
 One request posts all of them:
 
 ```bash
-curl -u "$GERRIT_USER:$GERRIT_HTTP_PASSWORD" \
+curl -u "$GERRIT_USER:$GERRIT_TOKEN" \
      -X POST -H 'Content-Type: application/json' \
      "https://gerrit.goudout.com/a/changes/$CHANGE/revisions/current/review" \
      -d '{
@@ -240,11 +173,11 @@ curl -u "$GERRIT_USER:$GERRIT_HTTP_PASSWORD" \
 For the reply, fetch a comment UUID and answer it:
 
 ```bash
-PARENT=$(curl -s -u "$GERRIT_USER:$GERRIT_HTTP_PASSWORD" \
+PARENT=$(curl -s -u "$GERRIT_USER:$GERRIT_TOKEN" \
   "https://gerrit.goudout.com/a/changes/$CHANGE/comments" | tail -n +2 | \
   python3 -c 'import json,sys; print(json.load(sys.stdin)["src/calc.py"][0]["id"])')
 
-curl -u "$GERRIT_USER:$GERRIT_HTTP_PASSWORD" \
+curl -u "$GERRIT_USER:$GERRIT_TOKEN" \
      -X POST -H 'Content-Type: application/json' \
      "https://gerrit.goudout.com/a/changes/$CHANGE/revisions/current/review" \
      -d "{\"message\": \"Replying inline.\",
@@ -277,12 +210,12 @@ git push origin HEAD:refs/for/master
 Then approve and submit:
 
 ```bash
-curl -u "$GERRIT_USER:$GERRIT_HTTP_PASSWORD" \
+curl -u "$GERRIT_USER:$GERRIT_TOKEN" \
      -X POST -H 'Content-Type: application/json' \
      "https://gerrit.goudout.com/a/changes/$CHANGE/revisions/current/review" \
      -d '{"message": "LGTM", "labels": {"Code-Review": 2}}'
 
-curl -u "$GERRIT_USER:$GERRIT_HTTP_PASSWORD" \
+curl -u "$GERRIT_USER:$GERRIT_TOKEN" \
      -X POST -H 'Content-Type: application/json' \
      "https://gerrit.goudout.com/a/changes/$CHANGE/submit"
 ```
