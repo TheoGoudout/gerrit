@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -73,12 +74,42 @@ def build_query(mapping: ProjectMapping, since: Optional[datetime]) -> str:
 
 
 class Reconciler:
+    """Converges GitHub onto Gerrit's state.
+
+    HTTP clients are built per thread rather than shared: the sweep and the
+    webhook workers run concurrently, and `requests.Session` is not
+    documented as thread-safe. The ledger is shared, and locks internally.
+    """
+
     def __init__(self, config: Config, ledger: Ledger) -> None:
         self._config = config
         self._ledger = ledger
-        self._gerrit = GerritClient(
-            config.gerrit.url, config.gerrit.username, config.gerrit.token
+        self._local = threading.local()
+
+    @property
+    def _gerrit(self) -> GerritClient:
+        return self._context()[0]
+
+    def _context(self) -> tuple[GerritClient, dict[str, tuple[ProjectMapping, Projector]]]:
+        """Return this thread's Gerrit client and per-project projectors."""
+        existing = getattr(self._local, "context", None)
+        if existing is not None:
+            return existing
+        gerrit = GerritClient(
+            self._config.gerrit.url,
+            self._config.gerrit.username,
+            self._config.gerrit.token,
         )
+        projectors = {}
+        for mapping in self._config.projects:
+            mirror = self._mirror_for(mapping)
+            projectors[mapping.gerrit_project] = (
+                mapping,
+                self._projector_for(mapping, mirror, gerrit),
+            )
+        context = (gerrit, projectors)
+        self._local.context = context
+        return context
 
     def _mirror_for(self, mapping: ProjectMapping) -> Mirror:
         path = os.path.join(
@@ -90,16 +121,45 @@ class Reconciler:
             dry_run=self._config.dry_run,
         )
 
-    def _projector_for(self, mapping: ProjectMapping, mirror: Mirror) -> Projector:
+    def _projector_for(
+        self, mapping: ProjectMapping, mirror: Mirror, gerrit: GerritClient
+    ) -> Projector:
         github = GitHubClient(
             mapping.github.token,
             mapping.github.owner,
             mapping.github.repo,
             api_url=mapping.github.api_url,
         )
-        return Projector(
-            self._config, mapping, self._gerrit, github, mirror, self._ledger
-        )
+        return Projector(self._config, mapping, gerrit, github, mirror, self._ledger)
+
+    def project_change_number(
+        self, project: str, number: int
+    ) -> Optional[ProjectionResult]:
+        """Project a single change, identified the way an event names it.
+
+        This is the webhook path. It deliberately re-reads the change from
+        Gerrit instead of trusting the event body, which carries no inline
+        comments.
+        """
+        gerrit, projectors = self._context()
+        entry = projectors.get(project)
+        if entry is None:
+            logger.debug("ignoring event for unconfigured project %s", project)
+            return None
+        _, projector = entry
+        change = gerrit.get_change(f"{project}~{number}")
+        result = projector.project(change)
+        if result.reviews_posted or result.created_pr:
+            logger.info(
+                "[%s] webhook: PR #%s, %s reviews, %s inline, %s fallback%s",
+                result.change_key,
+                result.pr_number,
+                result.reviews_posted,
+                result.comments_posted,
+                result.fallbacks_posted,
+                " (created)" if result.created_pr else "",
+            )
+        return result
 
     def sweep_project(
         self, mapping: ProjectMapping, *, full: bool = False
@@ -113,12 +173,12 @@ class Reconciler:
         query = build_query(mapping, since)
         logger.info("[%s] query: %s", mapping.gerrit_project, query)
 
-        mirror = self._mirror_for(mapping)
+        gerrit, projectors = self._context()
+        mapping, projector = projectors[mapping.gerrit_project]
         if not self._config.dry_run:
-            mirror.fetch()
-        projector = self._projector_for(mapping, mirror)
+            self._mirror_for(mapping).fetch()
 
-        for change in self._gerrit.query_changes(
+        for change in gerrit.query_changes(
             query, page_size=self._config.page_size
         ):
             stats.inspected += 1

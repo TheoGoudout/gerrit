@@ -48,6 +48,8 @@ class ProjectionResult:
     comments_posted: int = 0
     fallbacks_posted: int = 0
     skipped_reason: Optional[str] = None
+    # Set when a human has to look at something the archiver cannot fix.
+    needs_attention: bool = False
 
 
 class Projector:
@@ -122,6 +124,7 @@ class Projector:
         current_number = (change.get("revisions") or {}).get(sha, {}).get("_number")
         if current_number is not None and self._ledger.pushed_sha(key, current_number) == sha:
             return sha
+        self._mirror.ensure_commit(sha)
         self._mirror.push_archive_head(self._mapping.github.git_url, sha, branch)
         if current_number is not None:
             self._ledger.record_patchset(key, current_number, sha)
@@ -336,6 +339,18 @@ class Projector:
             change.get("is_private") or change.get("private")
         ):
             result.skipped_reason = "private"
+            record = self._ledger.get_change(key)
+            if record and record.pr_number:
+                # Already published before it was made private. Nothing the
+                # API can do undoes that, so make it loud rather than silent.
+                logger.error(
+                    "change %s became private but is already archived as %s#%s; "
+                    "review that pull request manually",
+                    key,
+                    self._mapping.github.slug,
+                    record.pr_number,
+                )
+                result.needs_attention = True
             return result
 
         if self._mapping.branches and change.get("branch") not in self._mapping.branches:

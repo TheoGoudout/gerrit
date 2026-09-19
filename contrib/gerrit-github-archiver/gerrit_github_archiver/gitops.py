@@ -87,6 +87,19 @@ class Mirror:
             "+refs/changes/*:refs/changes/*",
         )
 
+    def ensure_commit(self, sha: str) -> bool:
+        """Make `sha` available locally, fetching from Gerrit if needed.
+
+        The webhook path reacts to a patch set within seconds of it being
+        created, so the mirror is routinely one fetch behind. Fetching only on
+        a miss keeps the common case free.
+        """
+        if self.has_commit(sha):
+            return True
+        logger.debug("commit %s missing from mirror; fetching", sha[:10])
+        self.fetch()
+        return self.has_commit(sha)
+
     def has_commit(self, sha: str) -> bool:
         if not _SHA_RE.match(sha or ""):
             return False

@@ -1,0 +1,55 @@
+; Gerrit-side configuration for the webhook receiver.
+;
+; Install as $site_path/etc/webhooks.config, then:
+;   ssh -p 29418 gerrit-host gerrit plugin reload webhooks
+;
+; This only shortens latency. The archiver's periodic sweep is what makes the
+; archive correct, because this plugin gives up after maxTries and drops the
+; event with nothing but a log line. Never run the receiver without the sweep.
+
+[remote "archiver"]
+	; The receiver authenticates on a shared secret. This plugin cannot sign
+	; payloads and cannot send custom headers, so the credential has to live
+	; in the URL -- either as a query parameter, as here, or as HTTP basic
+	; credentials (http://gerrit:TOKEN@127.0.0.1:8081/gerrit-event).
+	;
+	; Consequences worth taking seriously:
+	;   * This file therefore contains a secret. Restrict it to the Gerrit
+	;     user; there is no secure.config equivalent for webhooks.
+	;   * sslVerify defaults to FALSE in this plugin. Over anything but
+	;     loopback, set it true, or the credential is exposed to anyone who
+	;     can intercept the connection.
+	;   * Prefer keeping the receiver on loopback or a private network.
+	url = http://127.0.0.1:8081/gerrit-event?token=REPLACE_ME
+
+	; Events that change what an archived pull request should look like.
+	event = patchset-created
+	event = comment-added
+	event = change-merged
+	event = change-abandoned
+	event = change-restored
+	event = wip-state-changed
+	event = topic-changed
+	event = reviewer-added
+	event = reviewer-deleted
+	event = vote-deleted
+	event = hashtags-changed
+
+	; Subscribed deliberately: a change turning private after it has already
+	; been archived is a disclosure the API cannot undo. The archiver logs it
+	; at ERROR and flags it for a human rather than failing quietly.
+	event = private-state-changed
+
+	; Not subscribed: ref-updated, batch-ref-updated, project-created and
+	; friends carry no change, and the receiver ignores them anyway.
+
+	; More generous than the defaults (5 tries, 1s apart). The receiver
+	; answers immediately without touching Gerrit or GitHub, so a failure
+	; here means it is down -- worth a longer window before giving up and
+	; leaving the event to the sweep.
+	maxTries = 10
+	retryInterval = 5000
+
+	connectionTimeout = 5000
+	socketTimeout = 5000
+	sslVerify = true

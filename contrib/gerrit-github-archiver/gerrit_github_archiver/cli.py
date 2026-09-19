@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sys
+import threading
 
 from .config import Config, ConfigError
 from .ledger import Ledger
@@ -31,6 +33,75 @@ def _setup_logging(verbose: bool) -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+
+def _serve(config, reconciler) -> int:
+    """Run the webhook receiver and the sweep loop together.
+
+    The sweep is not optional. Gerrit's webhooks plugin drops events after a
+    few failed retries, so the receiver only shortens latency; the sweep is
+    what makes the archive correct.
+    """
+    from .webhook import WebhookServer
+
+    if not config.webhook.enabled:
+        print(
+            "webhook.enabled is false; use 'run' for sweep-only operation",
+            file=sys.stderr,
+        )
+        return 2
+
+    server = WebhookServer(
+        host=config.webhook.host,
+        port=config.webhook.port,
+        path=config.webhook.path,
+        token=config.webhook.token,
+        handler=reconciler.project_change_number,
+        workers=config.webhook.workers,
+        queue_size=config.webhook.queue_size,
+    )
+    server.start()
+
+    stop = threading.Event()
+
+    def _shutdown(signum, _frame):
+        logging.getLogger(__name__).info("signal %s, shutting down", signum)
+        stop.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _shutdown)
+
+    sweeper = threading.Thread(
+        target=_sweep_loop, args=(config, reconciler, stop), name="sweep", daemon=True
+    )
+    sweeper.start()
+
+    try:
+        while not stop.wait(1.0):
+            pass
+    finally:
+        server.stop()
+        sweeper.join(timeout=10)
+    return 0
+
+
+def _sweep_loop(config, reconciler, stop: threading.Event) -> None:
+    log = logging.getLogger(__name__)
+    while not stop.is_set():
+        try:
+            stats = reconciler.sweep()
+            log.info(
+                "sweep done: %d inspected, %d projected, %d unchanged, "
+                "%d skipped, %d failed",
+                stats.inspected,
+                stats.projected,
+                stats.unchanged,
+                stats.skipped,
+                stats.failed,
+            )
+        except Exception:  # noqa: BLE001 - the loop must outlive any single sweep
+            log.exception("sweep failed")
+        stop.wait(config.poll_interval_seconds)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,6 +127,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     sub.add_parser("run", help="reconcile continuously on the configured interval")
+    sub.add_parser(
+        "serve",
+        help="run the webhook receiver alongside the periodic sweep "
+        "(the sweep still guarantees correctness)",
+    )
     sub.add_parser("status", help="print ledger statistics")
 
     args = parser.parse_args(argv)
@@ -68,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.dry_run:
-        config = Config(**{**config.__dict__, "dry_run": True})
+        config = config.with_dry_run()
 
     ledger = Ledger(config.ledger_path)
     try:
@@ -83,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run":
             reconciler.run_forever()
             return 0
+
+        if args.command == "serve":
+            return _serve(config, reconciler)
 
         stats = reconciler.sweep(full=args.full)
         print(

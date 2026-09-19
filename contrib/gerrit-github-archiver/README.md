@@ -77,8 +77,12 @@ python3 -m gerrit_github_archiver -c config.json --dry-run sweep
 # One reconciliation pass.
 python3 -m gerrit_github_archiver -c config.json sweep
 
-# Continuous.
+# Continuous, sweep only.
 python3 -m gerrit_github_archiver -c config.json run
+
+# Continuous, sweep plus the webhook receiver (see webhooks.config.example).
+export WEBHOOK_TOKEN=...
+python3 -m gerrit_github_archiver -c config.json serve
 
 # Cutover: re-inspect every change, ignoring the lookback window.
 python3 -m gerrit_github_archiver -c config.json sweep --full
@@ -107,10 +111,43 @@ one pull request and one copy of every comment; a wiped ledger recovers via
 markers rather than duplicating; and a review interrupted partway through
 resumes.
 
+## The webhook receiver
+
+`serve` adds an HTTP listener for Gerrit's `webhooks` plugin on top of the
+sweep. It is **latency only**: the plugin retries `maxTries` times and then
+drops the event permanently, so the sweep still runs and still decides what is
+correct. Never run the receiver alone.
+
+Two things follow from how the plugin behaves:
+
+*The handler must answer fast.* Anything slower than the retry budget turns a
+delivery into a permanent loss. The handler authenticates, parses, enqueues and
+returns `202` without touching Gerrit or GitHub.
+
+*The body is a trigger, not a payload.* `CommentAddedEvent` carries the change
+message and approvals but no inline comments, so the worker re-reads the change
+from Gerrit rather than trusting what arrived.
+
+Work is queued per change and **coalesced**: a burst of events for one change
+collapses into one projection, and a change already in flight is never handed
+to a second worker — if more events arrive meanwhile it is re-queued exactly
+once. On overflow the queue sheds load and lets the sweep catch up.
+
+### Authentication
+
+The plugin cannot sign payloads and cannot send custom headers, so the only
+credential available is one embedded in the configured URL. The receiver
+accepts a shared secret as HTTP basic auth, an `X-Archiver-Token` header, or a
+`?token=` query parameter, compared with `hmac.compare_digest`.
+
+Note that the plugin's `sslVerify` defaults to **false**. Keep the receiver on
+loopback or a private network, or set `sslVerify = true` on the Gerrit side —
+otherwise the credential is exposed to anyone who can intercept the connection.
+
 ## Not yet implemented
 
-- Webhook receiver (`webhooks` plugin -> HTTP) for sub-minute latency.
 - Deleting archive branches after a PR closes (`refs/pull/<n>/head` persists,
   so this is safe to add).
-- Per-change locking; the sweep is single-threaded, which is sufficient at
-  trial volume but would need revisiting alongside a webhook path.
+- Un-publishing a change that turns private after it was archived. The API
+  cannot undo disclosure, so the archiver logs at ERROR and flags it for a
+  human instead of failing quietly.

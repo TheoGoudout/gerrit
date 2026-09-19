@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 
@@ -68,6 +68,33 @@ class ProjectMapping:
 
 
 @dataclass(frozen=True)
+class WebhookConfig:
+    """Receiver for Gerrit's webhooks plugin.
+
+    Latency optimisation only: the reconciler remains the correctness
+    mechanism, because the plugin drops events after a few failed retries.
+    """
+
+    enabled: bool = False
+    # Bind to loopback by default. The webhooks plugin cannot sign payloads
+    # or send custom headers, so the only credential available is whatever
+    # is embedded in the URL -- and it defaults to not verifying TLS. Keep
+    # the listener off the public network.
+    host: str = "127.0.0.1"
+    port: int = 8081
+    path: str = "/gerrit-event"
+    # Shared secret, compared against HTTP basic auth, an X-Archiver-Token
+    # header, or a ?token= query parameter. Read from WEBHOOK_TOKEN when
+    # absent from the file. Empty disables authentication entirely.
+    token: str = ""
+    # Each worker gets its own HTTP clients, so more than one is safe; one is
+    # usually plenty and makes ordering trivially correct.
+    workers: int = 1
+    # On overflow events are dropped and the sweep picks them up instead.
+    queue_size: int = 1000
+
+
+@dataclass(frozen=True)
 class Config:
     gerrit: GerritConfig
     projects: tuple[ProjectMapping, ...]
@@ -87,6 +114,7 @@ class Config:
     # Present as a flag only so tests can exercise the unfiltered path.
     skip_private: bool = True
     dry_run: bool = False
+    webhook: WebhookConfig = field(default_factory=WebhookConfig)
 
     @staticmethod
     def load(path: str) -> "Config":
@@ -131,9 +159,28 @@ class Config:
             entry["branches"] = tuple(entry.get("branches") or ())
             projects.append(ProjectMapping(github=GitHubConfig(**gh), **entry))
 
+        webhook_raw = dict(raw.get("webhook") or {})
+        if "token" not in webhook_raw:
+            webhook_raw["token"] = os.environ.get("WEBHOOK_TOKEN", "")
+        try:
+            webhook = WebhookConfig(**webhook_raw)
+        except TypeError as exc:
+            raise ConfigError(f"invalid 'webhook' section: {exc}") from exc
+
         top = {
             k: v
             for k, v in raw.items()
-            if k not in ("gerrit", "projects")
+            if k not in ("gerrit", "projects", "webhook")
         }
-        return Config(gerrit=gerrit, projects=tuple(projects), **top)
+        try:
+            return Config(
+                gerrit=gerrit,
+                projects=tuple(projects),
+                webhook=webhook,
+                **top,
+            )
+        except TypeError as exc:
+            raise ConfigError(f"unknown configuration key: {exc}") from exc
+
+    def with_dry_run(self) -> "Config":
+        return replace(self, dry_run=True)

@@ -33,6 +33,7 @@ class FakeMirror:
     def __init__(self) -> None:
         self.pushes: list[tuple[str, str]] = []
         self.deleted: list[str] = []
+        self.ensured: list[str] = []
 
     def push_archive_head(self, url: str, sha: str, branch: str) -> None:
         self.pushes.append((sha, branch))
@@ -44,6 +45,10 @@ class FakeMirror:
         return "p" * 40
 
     def has_commit(self, sha: str) -> bool:
+        return True
+
+    def ensure_commit(self, sha: str) -> bool:
+        self.ensured.append(sha)
         return True
 
     def fetch(self) -> None:
