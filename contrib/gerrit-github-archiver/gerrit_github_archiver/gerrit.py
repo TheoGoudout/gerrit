@@ -54,15 +54,25 @@ def _strip_xssi(text: str) -> Any:
 
 
 class GerritClient:
-    def __init__(self, url: str, username: str, token: str, timeout: int = 30) -> None:
+    def __init__(
+        self,
+        url: str,
+        username: str,
+        token: str,
+        timeout: int = 30,
+        anonymous: bool = False,
+    ) -> None:
         self._base = url.rstrip("/")
         self._timeout = timeout
+        self._anonymous = anonymous
         self._session = requests.Session()
-        # The /a/ path prefix selects Gerrit's authenticated endpoints.
-        self._session.auth = (username, token)
+        if not anonymous:
+            # The /a/ path prefix selects Gerrit's authenticated endpoints.
+            self._session.auth = (username, token)
 
     def _get(self, path: str, params: Optional[dict[str, Any]] = None) -> Any:
-        url = f"{self._base}/a{path}"
+        prefix = "" if self._anonymous else "/a"
+        url = f"{self._base}{prefix}{path}"
         resp = self._session.get(url, params=params, timeout=self._timeout)
         if resp.status_code == 404:
             raise GerritError(f"not found: {path}")
@@ -104,10 +114,32 @@ class GerritClient:
     def get_comments(self, change_id: str) -> dict[str, list[dict]]:
         """Return published inline comments as ``{path: [CommentInfo, ...]}``.
 
+        `enable-context` is what makes Gerrit return `context_lines`, the
+        source the reviewer was actually looking at. Comments that GitHub
+        refuses to anchor fall back to quoting that, so without this
+        parameter the fallback silently loses the code it refers to.
+
+        The option is spelled with a hyphen (`--enable-context` in
+        ListChangeComments); some versions' prose documents it with an
+        underscore, which the server rejects outright. A server that refuses
+        it is retried without, since losing context is better than losing the
+        comments.
+
         Drafts are deliberately not fetched: they are unpublished by
         definition and archiving them would leak private notes.
         """
-        return self._get(f"/changes/{quote(change_id, safe='')}/comments")
+        path = f"/changes/{quote(change_id, safe='')}/comments"
+        try:
+            return self._get(path, params={"enable-context": "true"})
+        except GerritError as exc:
+            if "400" not in str(exc):
+                raise
+            logger.warning(
+                "server rejected enable-context; falling back to comments "
+                "without source context (%s)",
+                str(exc)[:120],
+            )
+            return self._get(path)
 
     def get_patch(self, change_id: str, revision: str) -> str:
         """Return the raw diff of a revision (used only for diagnostics)."""

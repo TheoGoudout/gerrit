@@ -34,6 +34,11 @@ class GerritConfig:
     token: str
     # Git URL used to fetch refs/changes/*. Defaults to `url`.
     git_url: str = ""
+    # Read over the unauthenticated endpoints. Only viable where the instance
+    # grants anonymous read, and only ever read: the archiver never writes to
+    # Gerrit. Note that anonymous access cannot see private changes at all,
+    # which is a safe direction to fail in.
+    anonymous: bool = False
 
     def __post_init__(self) -> None:
         if not self.url:
@@ -128,8 +133,11 @@ class Config:
             raise ConfigError("missing 'gerrit' section")
         g = dict(raw["gerrit"])
         g.setdefault("token", os.environ.get("GERRIT_TOKEN", ""))
-        if not g.get("token"):
-            raise ConfigError("gerrit token missing (set gerrit.token or GERRIT_TOKEN)")
+        if not g.get("token") and not g.get("anonymous"):
+            raise ConfigError(
+                "gerrit token missing (set gerrit.token, GERRIT_TOKEN, or "
+                "gerrit.anonymous for an instance that allows anonymous read)"
+            )
         g.setdefault("git_url", g["url"])
         gerrit = GerritConfig(**g)
 

@@ -99,6 +99,7 @@ class Reconciler:
             self._config.gerrit.url,
             self._config.gerrit.username,
             self._config.gerrit.token,
+            anonymous=self._config.gerrit.anonymous,
         )
         projectors = {}
         for mapping in self._config.projects:
