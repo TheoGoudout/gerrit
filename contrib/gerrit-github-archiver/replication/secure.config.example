@@ -1,0 +1,22 @@
+; Install as $site_path/etc/secure.config, mode 0600, owned by the Gerrit user.
+;
+; The section name must match the remote name in replication.config.
+;
+; For GitHub the username is ignored when the password is a token; use
+; x-access-token by convention. The token needs, on each destination
+; repository: Contents: write. Nothing else.
+;
+; Prefer a fine-grained token scoped to exactly the mirror and archive
+; repositories over a classic token with the broad `repo` scope.
+
+[remote "github-mirror"]
+	username = x-access-token
+	password = github_pat_REPLACE_ME
+
+[remote "github-archive"]
+	username = x-access-token
+	password = github_pat_REPLACE_ME
+
+[remote "github-archive-allusers"]
+	username = x-access-token
+	password = github_pat_REPLACE_ME

@@ -7,7 +7,8 @@ This is **layer C** of the archive design: the human-readable view. It is not
 the durable record. Layers A and B — replicating `refs/heads/*` to the GitHub
 mirror and `refs/changes/*` plus `All-Users` to a private archive repository —
 are pure `replication` plugin configuration and are what actually guarantee
-nothing is lost. Set those up first; this tool is a convenience layer on top.
+nothing is lost. They live in [`replication/`](replication/). Set those up
+first; this tool is a convenience layer on top.
 
 ## Design
 
