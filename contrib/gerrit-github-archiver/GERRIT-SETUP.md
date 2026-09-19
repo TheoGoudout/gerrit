@@ -194,7 +194,9 @@ And the unauthenticated API must now refuse you:
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' \
   'https://gerrit.goudout.com/a/accounts/self'
-# expect: 401
+# expect: 401 -- but this proves nothing on its own: it returns 401 merely
+# because no session cookie was sent, and does so just as readily under
+# DEVELOPMENT_BECOME_ANY_ACCOUNT. Only the auth_type check decides.
 ```
 
 If either still shows the old behaviour, the old instance is still serving —

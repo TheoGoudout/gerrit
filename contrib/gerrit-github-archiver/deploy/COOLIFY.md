@@ -118,10 +118,19 @@ curl -s https://gerrit.goudout.com/config/server/info | tail -n +2 | \
 # expect: OAUTH
 
 curl -s -o /dev/null -w '%{http_code}\n' https://gerrit.goudout.com/a/accounts/self
-# expect: 401
+# expect: 401 -- but note this proves nothing on its own. It returns 401
+# simply because no session cookie was sent, and it does so just as readily
+# under DEVELOPMENT_BECOME_ANY_ACCOUNT, where anyone can get a session from
+# the Become page and then this endpoint answers happily. Only the auth_type
+# check above decides whether the instance is safe.
 
 curl -s https://gerrit.goudout.com/config/server/version
 # expect: "3.14.3"
+
+# The oauth plugin must actually be loaded. A 404 here means the jar is not
+# in /var/gerrit/plugins, and no amount of config will make OAUTH work.
+curl -s -o /dev/null -w '%{http_code}\n' https://gerrit.goudout.com/oauth
+# expect: anything but 404 (302 to GitHub once configured)
 ```
 
 If `auth_type` still reads `DEVELOPMENT_BECOME_ANY_ACCOUNT`, the old instance
