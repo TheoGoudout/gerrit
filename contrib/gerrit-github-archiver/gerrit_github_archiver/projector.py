@@ -353,6 +353,18 @@ class Projector:
                 result.needs_attention = True
             return result
 
+        if project_name != self._mapping.gerrit_project:
+            # The sweep query already scopes by project, so reaching here means
+            # something upstream is wrong. Refuse rather than push one
+            # project's change into another project's GitHub repository.
+            logger.warning(
+                "refusing to project %s under the %s mapping",
+                key,
+                self._mapping.gerrit_project,
+            )
+            result.skipped_reason = f"project {project_name} not mapped here"
+            return result
+
         if self._mapping.branches and change.get("branch") not in self._mapping.branches:
             result.skipped_reason = f"branch {change.get('branch')} not archived"
             return result

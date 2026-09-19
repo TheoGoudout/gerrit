@@ -251,6 +251,16 @@ class VisibilityTest(ProjectorTestBase):
         self.assertIn("not archived", result.skipped_reason or "")
         self.assertEqual(github.prs, {})
 
+    def test_change_from_another_project_is_refused(self):
+        # Defence in depth: the sweep query scopes by project, but a mismatch
+        # must never push one project's change into another's repository.
+        projector = self.build()
+        result = projector.project(make_change(project="other-project"))
+
+        self.assertIn("not mapped here", result.skipped_reason or "")
+        self.assertEqual(self.github.prs, {})
+        self.assertEqual(self.mirror.pushes, [])
+
     def test_dry_run_writes_nothing(self):
         projector = self.build(comments={"a.java": [make_comment()]}, dry_run=True)
         result = projector.project(make_change())
