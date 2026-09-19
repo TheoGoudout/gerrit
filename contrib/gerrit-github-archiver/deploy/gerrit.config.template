@@ -1,0 +1,24 @@
+; Append these sections to /var/gerrit/etc/gerrit.config after the first boot.
+; Leave the [gerrit] serverId and the [container]/[index] sections that init
+; generated alone - serverId in particular is referenced by NoteDb records.
+
+[auth]
+	type = OAUTH
+
+[plugin "gerrit-oauth-provider-github-oauth"]
+	root-url = https://github.com/
+	client-id = REPLACE_WITH_CLIENT_ID
+
+[sendemail]
+	; Turn this on deliberately once you have an SMTP host. Left enabled with
+	; no host, Gerrit logs an error on every review.
+	enable = false
+
+[httpd]
+	; Set by HTTPD_LISTEN_URL; shown here so the file reads coherently.
+	listenUrl = proxy-http://*:8080/
+
+[download]
+	; No SSH is exposed through Coolify's HTTP proxy, so advertise the scheme
+	; that actually works in the clone instructions Gerrit shows users.
+	scheme = http

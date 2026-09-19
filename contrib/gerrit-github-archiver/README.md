@@ -66,7 +66,8 @@ Unanchorable comments quote `context_lines` from the Gerrit API, so the source
 the reviewer was looking at is preserved even though the anchor is not.
 
 [GERRIT-SETUP.md](GERRIT-SETUP.md) covers standing up Gerrit itself with
-real authentication. [TESTING.md](TESTING.md) then creates a test change
+real authentication, and [deploy/COOLIFY.md](deploy/COOLIFY.md) does it as
+a container on Coolify. [TESTING.md](TESTING.md) then creates a test change
 that exercises every projection path and verifies the result.
 
 ## Usage

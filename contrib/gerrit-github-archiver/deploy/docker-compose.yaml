@@ -1,0 +1,50 @@
+# Gerrit for Coolify.
+#
+# In the Coolify UI set the service domain to https://gerrit.goudout.com and
+# the exposed port to 8080. Coolify generates the Traefik labels and terminates
+# TLS itself, which is why Gerrit is told to listen with proxy-http below.
+
+services:
+  gerrit:
+    build: .
+    restart: unless-stopped
+
+    environment:
+      # Must be the public HTTPS URL. Gerrit builds redirects, email links and
+      # the OAuth callback from this; get it wrong and login loops.
+      - CANONICAL_WEB_URL=https://gerrit.goudout.com/
+      # proxy-http, not http. Tells Gerrit it sits behind a TLS-terminating
+      # proxy so it trusts X-Forwarded-* and emits https:// links. Plain http
+      # here produces http:// redirects and a broken OAuth callback.
+      - HTTPD_LISTEN_URL=proxy-http://*:8080/
+
+    expose:
+      - "8080"
+
+    # Every one of these must persist. git and db hold the repositories and
+    # NoteDb - that is the review history itself. index and cache are
+    # rebuildable but slow to regenerate. etc holds gerrit.config, secure.config
+    # and the generated serverId, which NoteDb records reference.
+    volumes:
+      - gerrit-git:/var/gerrit/git
+      - gerrit-db:/var/gerrit/db
+      - gerrit-index:/var/gerrit/index
+      - gerrit-cache:/var/gerrit/cache
+      - gerrit-etc:/var/gerrit/etc
+
+    # Gerrit takes a while to come up, and longer on the first boot while it
+    # initialises. Without a generous start_period the orchestrator kills it
+    # mid-init and you get a half-written site.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/config/server/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+
+volumes:
+  gerrit-git:
+  gerrit-db:
+  gerrit-index:
+  gerrit-cache:
+  gerrit-etc:

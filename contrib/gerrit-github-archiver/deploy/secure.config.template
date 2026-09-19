@@ -1,0 +1,5 @@
+; /var/gerrit/etc/secure.config -- chmod 600, owned by the gerrit user.
+; Never put the client secret in gerrit.config.
+
+[plugin "gerrit-oauth-provider-github-oauth"]
+	client-secret = REPLACE_WITH_CLIENT_SECRET

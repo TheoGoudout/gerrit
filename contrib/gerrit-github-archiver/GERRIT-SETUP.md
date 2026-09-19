@@ -61,6 +61,10 @@ change that prevents a repeat.
 
 ---
 
+> Deploying with Docker or Coolify instead of a tarball? Use
+> [deploy/COOLIFY.md](deploy/COOLIFY.md), which covers the same ground
+> with the container specifics, and skip to §2 below for the OAuth App.
+
 ## 1. Install Gerrit 3.14
 
 Java: 3.13 dropped Java 17, so plan on **Java 21 or later**; confirm against
