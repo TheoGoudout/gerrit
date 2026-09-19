@@ -65,6 +65,9 @@ anchoring regardless.
 Unanchorable comments quote `context_lines` from the Gerrit API, so the source
 the reviewer was looking at is preserved even though the anchor is not.
 
+See [TESTING.md](TESTING.md) for setting up a Gerrit instance, creating a
+test change that exercises every projection path, and verifying the result.
+
 ## Usage
 
 ```bash
