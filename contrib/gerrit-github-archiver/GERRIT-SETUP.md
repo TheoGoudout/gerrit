@@ -88,6 +88,13 @@ until the configuration below is in place.
 
 On GitHub: **Settings → Developer settings → OAuth Apps → New OAuth App**.
 
+**An OAuth App, not a GitHub App.** They are different products and the
+distinction matters here: the Gerrit oauth plugin requests the `user:email`
+scope to learn the account's address, and GitHub Apps do not accept scopes in
+the authorization request at all — permissions are fixed on the app instead.
+Register a GitHub App for this and login fails in a way that looks like a
+configuration error rather than a wrong app type.
+
 | Field | Value |
 |---|---|
 | Application name | anything, e.g. `Gerrit (goudout.com)` |
@@ -219,9 +226,35 @@ curl -u "$USER:$EXISTING_TOKEN" -X PUT \
   https://gerrit.goudout.com/a/accounts/self/tokens/archiver
 ```
 
-Give the archiver its **own account**, not yours. It only ever issues GETs, so
-it needs no more than read access, and a separate account keeps its activity
-distinguishable in the logs.
+Give the archiver its **own account**, not yours. On the Gerrit side it only
+ever issues GETs, so it needs no more than read access, and a separate account
+keeps its activity distinguishable in the logs.
+
+### The archiver's GitHub credential is a separate thing
+
+Two credentials are involved and they are not interchangeable:
+
+| | What it is | Used for |
+|---|---|---|
+| Gerrit login | **OAuth App** (client id + secret) | people signing in to Gerrit |
+| Archiver | **a token** in `secure.config` | writing pull requests and comments |
+
+The plugin reads a static `githubToken`, so today that means a **fine-grained
+personal access token** scoped to the destination repositories:
+
+* **Contents: write** — pushing the archive head branches
+* **Pull requests: write** — creating pull requests, reviews and comments
+* Metadata: read is added automatically
+
+A GitHub App would be better — short-lived tokens, per-repository install, no
+human account attached, higher rate limits — but it authenticates by signing a
+JWT with a private key and exchanging it for an hourly installation token, and
+the plugin does not implement that yet. A fine-grained PAT is the supported
+path.
+
+If a call returns 403, the response carries an
+`X-Accepted-GitHub-Permissions` header naming exactly what that endpoint
+wanted; read it rather than widening the token by guesswork.
 
 Then drop `"anonymous": true` from the archiver config and use:
 
