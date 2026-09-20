@@ -3,7 +3,8 @@
 In-process port of the Python archiver. Same design, same guarantees, running
 inside Gerrit instead of beside it.
 
-**Status: partial. Not yet loadable.** See "What is done" below before using.
+**Status: partial. Not yet loadable** — the Guice wiring is missing, so the
+jar builds but Gerrit will not run anything in it. See below.
 
 ## Why in-process
 
@@ -80,21 +81,34 @@ Guava inside the server.
 | `ArchiverConfig` | reads both config files, including the secure token |
 | `Ledger` | durable dedup store, append-only log with an in-memory index |
 | `Projection` | the full mapping: anchoring, grouping, attribution, rendering |
-| `ProjectionTest` | 24 tests, passing against the real 3.14.3 API types |
+| `Projection` | the full mapping: anchoring, grouping, attribution, rendering |
+| `GitHubClient` | REST and GraphQL, retry, primary and secondary rate limits |
+| `GitOps` / `JGitOps` | archive head pushes, behind an interface so the projector is testable |
+| `Projector` | per-change convergence, marker adoption, 422 fallbacks, lifecycle |
+| tests | **41 passing** against the real 3.14.3 API types |
 
 ## What is not done
 
-- `GitHubClient` — REST calls, retry, primary and secondary rate limits
-- `Projector` — the per-change convergence loop, including marker adoption
-- `Sweeper` — the scheduled reconciliation
+- `Sweeper` — the scheduled reconciliation via `ScheduleConfig`
 - Event listeners and the work-queue handoff
-- `Module` / `SshModule` — Guice wiring and the manual `sweep` command
-- Archive branch pushes via JGit
+- `Module` / `SshModule` — Guice wiring and a manual `sweep` ssh command
 
-Until the wiring exists the jar builds but does nothing. The Python
-implementation in the parent directory remains the working one.
+Until the wiring exists nothing calls the projector. The Python implementation
+in the parent directory remains the working one.
 
 ## Notes on the port
+
+No mirror. The external archiver had to clone each project and fetch to get
+patch set commits; in-process they are already in the repository
+`GitRepositoryManager` hands over, so `JGitOps` pushes straight from it.
+
+Comments are fetched with `commentsRequest().withContext(true)`, the typed
+equivalent of the `enable-context` request parameter. The Python client
+silently omitted that parameter for a while, which left every unanchorable
+comment quoting nothing. Here it is a method on a builder rather than a string
+that can be forgotten.
+
+## Storage
 
 `Ledger` deliberately avoids an embedded database. The plugin API bundles
 none, and taking a dependency to hold a few thousand rows is heavier than the
