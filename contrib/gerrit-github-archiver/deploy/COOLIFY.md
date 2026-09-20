@@ -79,6 +79,15 @@ an arbitrary account. But nobody can usefully log in yet either.
 
 Open a terminal on the container from Coolify, then append the OAuth sections:
 
+
+> **The section name follows the jar filename.** The plugin documents its
+> section as `[plugin "@PLUGIN@-github-oauth"]`, where `@PLUGIN@` is the
+> installed plugin name — that is the jar's filename without `.jar`. The CI
+> artifact is called `oauth.jar`, which makes the section
+> `[plugin "oauth-github-oauth"]`. The name below assumes the jar was saved as
+> `gerrit-oauth-provider.jar`. Pick one and be consistent, or Gerrit will
+> refuse to start with `auth.type = OAUTH` and no provider configured.
+
 ```bash
 cat >> /var/gerrit/etc/gerrit.config <<'EOF'
 

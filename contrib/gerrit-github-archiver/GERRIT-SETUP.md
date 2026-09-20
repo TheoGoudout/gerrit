@@ -124,6 +124,15 @@ cp oauth.jar /srv/gerrit-new/plugins/
 
 `/srv/gerrit-new/etc/gerrit.config`:
 
+
+> **The section name follows the jar filename.** The plugin documents its
+> section as `[plugin "@PLUGIN@-github-oauth"]`, where `@PLUGIN@` is the
+> installed plugin name — that is the jar's filename without `.jar`. The CI
+> artifact is called `oauth.jar`, which makes the section
+> `[plugin "oauth-github-oauth"]`. The name below assumes the jar was saved as
+> `gerrit-oauth-provider.jar`. Pick one and be consistent, or Gerrit will
+> refuse to start with `auth.type = OAUTH` and no provider configured.
+
 ```ini
 [gerrit]
     canonicalWebUrl = https://gerrit.goudout.com/
