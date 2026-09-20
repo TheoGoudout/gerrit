@@ -3,8 +3,10 @@
 In-process port of the Python archiver. Same design, same guarantees, running
 inside Gerrit instead of beside it.
 
-**Status: partial. Not yet loadable** — the Guice wiring is missing, so the
-jar builds but Gerrit will not run anything in it. See below.
+**Status: complete and building, never yet run inside a Gerrit.** 49 tests
+pass against the real 3.14.3 API and `mvn package` produces a loadable jar,
+but nothing has exercised it against a live server. Treat the first
+deployment as the real test.
 
 ## Why in-process
 
@@ -85,16 +87,49 @@ Guava inside the server.
 | `GitHubClient` | REST and GraphQL, retry, primary and secondary rate limits |
 | `GitOps` / `JGitOps` | archive head pushes, behind an interface so the projector is testable |
 | `Projector` | per-change convergence, marker adoption, 422 fallbacks, lifecycle |
-| tests | **41 passing** against the real 3.14.3 API types |
+| `ArchiveQueue` | coalescing, per-change serialisation, load shedding |
+| `ArchiverService` | ledger, workers, scheduled sweep, request context |
+| `EventHandlers` | seven listeners, each enqueue-and-return |
+| `Module` / `SshModule` | Guice wiring and the `sweep` command |
+| tests | **49 passing** against the real 3.14.3 API types |
 
-## What is not done
+## Running it
 
-- `Sweeper` — the scheduled reconciliation via `ScheduleConfig`
-- Event listeners and the work-queue handoff
-- `Module` / `SshModule` — Guice wiring and a manual `sweep` ssh command
+```bash
+mvn -q package
+cp target/github-archiver-0.1.0.jar $site/plugins/
+ssh -p 29418 host gerrit plugin reload github-archiver
+```
 
-Until the wiring exists nothing calls the projector. The Python implementation
-in the parent directory remains the working one.
+Then, on demand:
+
+```bash
+ssh -p 29418 host github-archiver sweep          # lookback window
+ssh -p 29418 host github-archiver sweep --full   # everything, for cutover
+```
+
+## The sweep is the correctness mechanism
+
+Not the listeners. A listener can be missed: a plugin reload, a projection
+that threw, the queue shedding load under a burst. So the sweep re-derives
+state from Gerrit and converges GitHub, and the listeners only shorten the
+delay.
+
+**Set `sweep.interval`.** Without it the plugin logs a warning and runs on
+events alone, where a missed event is lost for good.
+
+Listeners hand a change id to the queue and return — no Gerrit call, no GitHub
+call, no I/O. They run on Gerrit's own threads, and blocking one on a GitHub
+round trip would stall the review server. That is the central hazard of
+running in-process, and the enqueue-and-return rule is what contains it.
+
+## What is not verified
+
+The plugin has never been loaded into a running Gerrit. Compilation against
+the real API and 49 passing tests rule out a large class of mistakes, but not
+Guice wiring errors, request-context problems under a background thread, or
+anything about how JGit authenticates to GitHub from inside the server. Deploy
+it somewhere disposable first.
 
 ## Notes on the port
 
